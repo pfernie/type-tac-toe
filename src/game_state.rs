@@ -28,38 +28,59 @@ impl CellId {
     }
 }
 
-pub type TurnResult<'gs> = Result<ValidMove<'gs>, InvalidMove<'gs>>;
 pub trait Player {
-    fn next_move<'gs>(&mut self, state: Turn<'gs>) -> ValidMove<'gs>;
+    fn next_move<'gs>(&mut self, state: Turn<'gs>) -> MoveResult<'gs>;
 }
 
-pub struct ValidMove<'gs> {
+pub enum MoveResult<'gs> {
+    Valid(Move<'gs>),
+    GiveUp(Turn<'gs>),
+}
+
+#[must_use]
+pub struct Move<'gs> {
     id: CellId,
     m: Cell,
     gs: &'gs mut GameState,
 }
 
-pub struct InvalidMove<'gs>(pub Turn<'gs>);
-
-impl<'a> ValidMove<'a> {
-    pub fn apply(self) {
+impl<'gs> Move<'gs> {
+    pub fn end_turn(self) {
         self.gs.set_cell(self.id, self.m);
+    }
+
+    pub fn undo(self) -> Turn<'gs> {
+        Turn(self.gs)
     }
 }
 
-pub struct Turn<'a>(&'a mut GameState);
+pub enum VerifyResult<'gs> {
+    Valid(Move<'gs>),
+    Invalid(Turn<'gs>),
+}
 
-impl<'a> Turn<'a> {
-    pub fn verify(self, id: CellId, m: Cell) -> TurnResult<'a> {
+impl<'gs> VerifyResult<'gs> {
+    pub fn or<F: FnOnce(Turn<'gs>) -> VerifyResult<'gs>>(self, f: F) -> VerifyResult<'gs> {
+        match self {
+            VerifyResult::Invalid(t) => f(t),
+            v => v,
+        }
+    }
+}
+
+pub struct Turn<'gs>(&'gs mut GameState);
+
+impl<'gs> Turn<'gs> {
+    pub fn verify(self, id: CellId, m: Cell) -> VerifyResult<'gs> {
         match self.0.cells[id.0] {
             Cell::Empty => {
-                Ok(ValidMove {
+                VerifyResult::Valid(Move {
                     id: id,
                     m: m,
                     gs: self.0,
                 })
             }
-            _ => Err(InvalidMove(self)),
+            _ => VerifyResult::Invalid(self),
         }
     }
 }
@@ -68,9 +89,9 @@ pub struct GameState {
     cells: [Cell; 9],
 }
 
-impl<'a> std::fmt::Display for Turn<'a> {
+impl<'gs> std::fmt::Display for Turn<'gs> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::result::Result<(), std::fmt::Error> {
-        for r in self.0.cells.windows(3) {
+        for r in self.0.cells.chunks(3) {
             for c in r {
                 write!(f, " {} ", c)?;
             }
@@ -85,7 +106,7 @@ impl GameState {
         GameState { cells: [Cell::Empty; 9] }
     }
 
-    pub fn take_turn(&mut self) -> Turn {
+    pub fn start_turn(&mut self) -> Turn {
         Turn(self)
     }
 
